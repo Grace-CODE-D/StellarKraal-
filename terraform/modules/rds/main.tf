@@ -75,8 +75,8 @@ resource "aws_db_instance" "postgres" {
   vpc_security_group_ids = var.vpc_security_group_ids
   db_subnet_group_name   = var.db_subnet_group_name
 
-  deletion_protection      = local.is_production
-  skip_final_snapshot      = local.is_production ? false : true
+  deletion_protection       = local.is_production
+  skip_final_snapshot       = local.is_production ? false : true
   final_snapshot_identifier = local.is_production ? "${var.name}-${var.environment}-final" : null
 
   apply_immediately = var.apply_immediately
