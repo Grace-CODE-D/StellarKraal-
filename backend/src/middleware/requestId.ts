@@ -1,10 +1,12 @@
 import { randomUUID } from "crypto";
 import { Request, Response, NextFunction } from "express";
+import { runWithCorrelationId } from "../utils/correlationContext";
 
 // Extend Express Request to carry a requestId field.
 declare module "express-serve-static-core" {
   interface Request {
     requestId?: string;
+    logger?: import("winston").Logger;
   }
 }
 
@@ -28,5 +30,5 @@ export const requestIdMiddleware = (
       ? headerValue.trim()
       : randomUUID();
   res.setHeader("X-Request-ID", req.requestId);
-  next();
+  runWithCorrelationId(req.requestId, next);
 };
