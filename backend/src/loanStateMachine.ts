@@ -2,10 +2,33 @@ import logger from "./utils/logger";
 
 export type LoanStatus = "pending" | "active" | "repaid" | "liquidated" | "at_risk";
 
+export type TransitionTrigger = "job" | "api" | "liquidation";
+
 export interface TransitionRecord {
   from: LoanStatus;
   to: LoanStatus;
   at: string; // ISO timestamp
+  triggeredBy?: TransitionTrigger;
+}
+
+/**
+ * Minimal database connection surface required to persist transitions.
+ * Compatible with `pg` Pool/PoolClient and similar drivers.
+ */
+export interface TransitionDb {
+  query(
+    text: string,
+    values?: unknown[]
+  ): Promise<{ rows: unknown[] }>;
+}
+
+export interface TransitionOptions {
+  /** Database connection used to persist the transition audit row. */
+  db?: TransitionDb;
+  /** Identifier of the loan whose status is changing. */
+  loanId?: string;
+  /** What initiated the transition (job/api/liquidation). */
+  triggeredBy?: TransitionTrigger;
 }
 
 export interface TransitionLogContext {
@@ -57,16 +80,23 @@ const TRANSITIONS: Record<LoanStatus, LoanStatus[]> = {
  * Validate and apply a loan status transition.
  * Throws InvalidTransitionError for disallowed transitions.
  * Returns the new status and appends to the history array.
+ * When a DB connection and loan id are supplied, a row is inserted into
+ * `loan_transitions` to persist the audit trail.
  * @param current - The current loan status.
  * @param next - The desired next loan status.
  * @param history - Mutable array to append the transition record to.
+ * @param options - Optional persistence options (db, loanId, triggeredBy).
  * @returns The new {@link LoanStatus} after the transition.
  * @throws {@link InvalidTransitionError} if the transition from `current` to `next` is not allowed.
  * @example
  * const history: TransitionRecord[] = [];
- * const newStatus = transition("pending", "active", history);
+ * const newStatus = await transition("pending", "active", history, {
+ *   db,
+ *   loanId: "loan-1",
+ *   triggeredBy: "api",
+ * });
  */
-export function transition(
+export async function transition(
   current: LoanStatus,
   next: LoanStatus,
   history: TransitionRecord[],
