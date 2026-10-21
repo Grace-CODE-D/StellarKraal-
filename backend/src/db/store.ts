@@ -32,7 +32,7 @@ export interface CollateralRecord {
   deletedAt: string | null;
 }
 
-export type LoanStatus = 'active' | 'at_risk' | 'repaid' | 'liquidated';
+export type LoanStatus = 'active' | 'at_risk' | 'repaid' | 'liquidated' | 'paused';
 
 export interface LoanRecord {
   id: string;
@@ -41,6 +41,8 @@ export interface LoanRecord {
   amount: number;
   status?: LoanStatus;
   health_factor?: number | null;
+  /** ISO 8601 timestamp of the repayment deadline, if set by the origination flow. */
+  repaymentDeadline?: string | null;
   createdAt: string;
   deletedAt: string | null;
 }

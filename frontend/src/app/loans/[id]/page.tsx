@@ -8,6 +8,7 @@ import DetailSkeleton from '@/components/DetailSkeleton';
 import Breadcrumb from '@/components/Breadcrumb';
 import HealthGauge, { SkeletonHealthGauge } from '@/components/HealthGauge';
 import HealthFactorAlert from '@/components/HealthFactorAlert';
+import RepaymentCountdown from '@/components/RepaymentCountdown';
 import { useHealthFactor } from '@/hooks/useHealthFactor';
 import PrintButton from '@/components/PrintButton';
 import PrintButton from '@/components/PrintButton';
@@ -28,6 +29,8 @@ interface LoanRecord {
   health_factor?: number;
   status: string;
   createdAt: string;
+  /** ISO 8601 deadline for repayment, used to drive the countdown timer (closes #1250). */
+  repaymentDeadline?: string | null;
 }
 
 type ErrorType = '404' | 'network' | null;
@@ -337,6 +340,14 @@ export default function LoanDetailPage() {
 
       {loan.status === 'active' && (
         <>
+          {/* Repayment countdown timer — closes #1250 */}
+          {loan.repaymentDeadline && (
+            <RepaymentCountdown
+              deadline={loan.repaymentDeadline}
+              className="mb-6"
+            />
+          )}
+
           {/* Real-time health factor gauge + alert banners */}
           <section aria-label="Health factor" className="mb-6" data-testid="health-factor-section">
             <div className="bg-white rounded-2xl p-6 shadow">
