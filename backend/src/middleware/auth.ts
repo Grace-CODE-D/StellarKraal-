@@ -374,7 +374,7 @@ export function jwtMiddleware(req: Request, res: Response, next: NextFunction): 
     const payload = verifyJwt(authHeader.slice(7));
     (req as Request & { user: { publicKey: unknown; role?: string } }).user = {
       publicKey: payload.sub,
-      ...(typeof payload.role === 'string' ? { role: payload.role } : {}),
+      role: typeof payload.role === 'string' ? payload.role : undefined,
     };
     next();
   } catch (err: unknown) {

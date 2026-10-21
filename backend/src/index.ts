@@ -94,7 +94,11 @@ import rpcClient from './utils/rpcClient';
 import { mapSorobanError } from './utils/sorobanErrors';
 import { registerWebhook, getWebhooks, getDeliveryLogs, fireWebhooks } from './webhooks';
 import { etagMiddleware } from './utils/etag';
-import { scheduleHealthFactorJob, runHealthFactorJob } from './jobs/healthFactorJob';
+import {
+  scheduleHealthFactorJob,
+  runHealthFactorJob,
+  evaluateHealthFactors,
+} from './jobs/healthFactorJob';
 import { scheduleRepaymentReminderJob } from './jobs/repaymentReminderJob';
 import { compressionMiddleware } from './middleware/compression';
 import { sanitizeInput } from './middleware/sanitize';
@@ -108,6 +112,7 @@ import { rules } from './utils/alertRules';
 import { healthRouter } from './routes/health';
 import { loanRepaymentRouter } from './routes/loanRepayment';
 import { metricsAuthMiddleware } from './middleware/metricsAuth';
+import { bodySizeLimit, MAX_BODY_SIZE_BYTES } from './middleware/bodySizeLimit';
 
 // ── 5xx spike tracking (rolling 60s window) ───────────────────────────────────
 const fivexxTimestamps: number[] = [];
@@ -140,7 +145,9 @@ const app = express();
 // Startup warning for CORS misconfiguration
 app.use(helmetMiddleware);
 app.use(corsMiddleware);
-app.use(express.json());
+app.use(bodySizeLimit);
+app.use(express.json({ limit: `${MAX_BODY_SIZE_BYTES}b` }));
+app.use(express.urlencoded({ extended: true, limit: `${MAX_BODY_SIZE_BYTES}b` }));
 app.use(sanitizeInput);
 app.use(compressionMiddleware);
 
@@ -1198,6 +1205,40 @@ app.post(
   })
 );
 
+// POST /api/v1/admin/liquidation/check — evaluate liquidation candidates
+app.post(
+  '/api/v1/admin/liquidation/check',
+  asyncHandler(async (req: Request, res: Response) => {
+    const user = (req as any).user as { publicKey?: string; role?: string } | undefined;
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ error: 'Forbidden: admin role required' });
+    }
+
+    const dryRun = req.query.dryRun === 'true';
+    insertAuditEntry({
+      userId: user.publicKey ?? 'unknown',
+      action: 'liquidation.check',
+      resource: 'liquidation',
+      resourceId: 'bulk',
+      requestBody: redact({ dryRun }),
+      ip: req.ip,
+    });
+    auditLogger.info('liquidation.check', {
+      requestId: (req as any).requestId,
+      userId: user.publicKey,
+      dryRun,
+    });
+
+    const evaluation = await evaluateHealthFactors({ applyUpdates: !dryRun });
+    res.json({
+      loans: evaluation.candidates,
+      dryRun,
+      updated: evaluation.updated,
+      triggeredAt: new Date().toISOString(),
+    });
+  })
+);
+
 // ── soft-delete admin routes ──────────────────────────────────────────────────
 
 // GET /api/admin/deleted/collateral — list soft-deleted collateral records
@@ -1265,7 +1306,7 @@ const upload = multer({
     destination: (_req, _file, cb) => cb(null, uploadsDir),
     filename: (_req, file, cb) => cb(null, `${randomUUID()}${path.extname(file.originalname)}`),
   }),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+  limits: { fileSize: MAX_BODY_SIZE_BYTES },
   fileFilter: (_req, file, cb) => {
     if (file.mimetype.startsWith('image/')) cb(null, true);
     else cb(new Error('Only image files are allowed'));
@@ -1333,7 +1374,6 @@ app.post(
 
 // ── v1 collateral CRUD ────────────────────────────────────────────────────────
 
-const MAX_COLLATERAL_IMAGE_SIZE = 5 * 1024 * 1024;
 const COLLATERAL_IMAGE_EXTENSIONS: Record<string, string> = {
   'image/jpeg': '.jpg',
   'image/png': '.png',
@@ -1392,7 +1432,7 @@ const v1CollateralImageUpload = multer({
       cb(null, `${randomUUID()}${extension}`);
     },
   }),
-  limits: { fileSize: MAX_COLLATERAL_IMAGE_SIZE },
+  limits: { fileSize: MAX_BODY_SIZE_BYTES },
   fileFilter: (_req, file, cb) => {
     const mimetype = file.mimetype.toLowerCase();
     if (!COLLATERAL_IMAGE_EXTENSIONS[mimetype]) {
@@ -1426,10 +1466,11 @@ const handleV1CollateralImageError = (
   }
 
   removeUploadedFile(req.file);
-  const message =
-    isMulterError && (err as { code?: string }).code === 'LIMIT_FILE_SIZE'
-      ? 'image must be 5 MiB or smaller'
-      : err.message || 'image upload is invalid';
+  if (isMulterError && (err as { code?: string }).code === 'LIMIT_FILE_SIZE') {
+    res.status(413).json({ error: 'Payload Too Large' });
+    return;
+  }
+  const message = err.message || 'image upload is invalid';
   res.status(422).json({
     error: 'Validation failed',
     code: 'VALIDATION_ERROR',
@@ -1551,6 +1592,17 @@ app.get(
     const data = animalType ? result.data.filter((r) => r.animal_type === animalType) : result.data;
     const total = animalType ? data.length : result.total;
     res.json({ data, total, page: result.page, pageSize: result.limit });
+  })
+);
+
+// GET /api/v1/collateral/:id — fetch one collateral record
+app.get(
+  '/api/v1/collateral/:id',
+  readLimiter,
+  asyncHandler(async (req: Request, res: Response) => {
+    const record = getCollateral(req.params.id as string);
+    if (!record) return res.status(404).json({ error: 'Collateral not found' });
+    res.json(record);
   })
 );
 
@@ -1879,6 +1931,17 @@ app.get(
   })
 );
 
+// GET /api/v1/loans/:id — fetch one loan record
+app.get(
+  '/api/v1/loans/:id',
+  readLimiter,
+  asyncHandler(async (req: Request, res: Response) => {
+    const loan = getLoan(req.params.id as string);
+    if (!loan) return res.status(404).json({ error: 'Loan not found' });
+    res.json(loan);
+  })
+);
+
 // GET /api/admin/deleted/loans — list soft-deleted loan records
 app.get('/api/admin/deleted/loans', (req: Request, res: Response) => {
   res.json(listDeletedLoans());
@@ -2187,6 +2250,21 @@ app.patch(
 
 // ── error handler ─────────────────────────────────────────────────────────────
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+  if (res.headersSent) return;
+  const parserError = err as Error & {
+    status?: number;
+    statusCode?: number;
+    type?: string;
+    code?: string;
+  };
+  if (
+    parserError.status === 413 ||
+    parserError.statusCode === 413 ||
+    parserError.type === 'entity.too.large' ||
+    parserError.code === 'LIMIT_FILE_SIZE'
+  ) {
+    return res.status(413).json({ error: 'Payload Too Large' });
+  }
   if (err instanceof PoolExhaustedError) {
     return res.status(503).json({ error: 'Service unavailable: connection pool exhausted' });
   }
