@@ -1,18 +1,21 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
-  content: ["./src/**/*.{ts,tsx,js,jsx}"],
-  darkMode: "class",
+  content: [
+    './src/**/*.{js,jsx,ts,tsx}',
+    './public/index.html',
+  ],
   theme: {
     extend: {
-      // ── Keyframe animations ──────────────────────────────────────────────────
-      keyframes: {
-        fadeIn: {
-          '0%': { opacity: '0', transform: 'scale(0.6)' },
-          '100%': { opacity: '1', transform: 'scale(1)' },
-        },
+      screens: {
+        xs: '320px',
+        sm: '375px',
+        md: '428px',
+        lg: '768px',
+        xl: '1024px',
+        '2xl': '1280px',
       },
-      animation: {
-        fadeIn: 'fadeIn 0.6s ease-out both',
+      minWidth: {
+        touch: '44px',
       },
       // ── Spacing scale (#778) ─────────────────────────────────────────────────
       // Base-4 scale. Use these token names instead of arbitrary px values.
