@@ -1,14 +1,27 @@
 "use client";
 import { Component, ReactNode } from "react";
 
+/**
+ * ErrorBoundary — enhanced fallback UI with illustration and error tracker support.
+ *
+ * Features:
+ * - Branded SVG warning illustration (design-token colours → dark mode safe).
+ * - role="alert" + aria-live="assertive" on the fallback container.
+ * - onError callback prop for forwarding to Sentry / Datadog / custom trackers.
+ * - Errors are always logged to the console (not dev-only).
+ * - Error message shown in a collapsible <details> block in non-production.
+ * - onRetry prop resets the boundary and re-renders children (#522).
+ *
+ * Closes #1245
+ */
+
 interface Props {
   children: ReactNode;
   /** Shown above the generic message — e.g. "Dashboard" */
   section?: string;
   /**
    * When provided, the primary action becomes a retry button that calls
-   * this instead of reloading the whole page — e.g. navigate a multi-step
-   * flow back to its previous step (#522) — and the boundary clears its
+   * this instead of reloading the whole page — and the boundary clears its
    * own error state so the retried content gets a fresh render.
    */
   onRetry?: () => void;
@@ -88,6 +101,19 @@ export default class ErrorBoundary extends Component<Props, State> {
         <p className="text-brown/60 mb-6 text-sm">
           An unexpected error occurred. Please retry or report the issue.
         </p>
+
+        {/* Collapsible error details — non-production only */}
+        {isDev && (
+          <details className="mb-4 max-w-sm w-full text-left">
+            <summary className="text-xs text-brown/50 cursor-pointer hover:text-brown/80 transition select-none">
+              Error details
+            </summary>
+            <pre className="mt-2 text-xs bg-brown/5 rounded-lg p-3 overflow-auto text-brown/70 whitespace-pre-wrap break-words">
+              {error.message}
+            </pre>
+          </details>
+        )}
+
         <div className="flex gap-3 flex-wrap justify-center">
           <button
             onClick={this.handleRetry}
@@ -97,7 +123,7 @@ export default class ErrorBoundary extends Component<Props, State> {
           </button>
           <a
             href="/help/faq"
-            className="border border-brown/30 text-brown px-4 py-2 rounded-lg hover:bg-brown/5 transition text-sm"
+            className="border border-brown/30 text-brown px-4 py-2 rounded-lg hover:bg-brown/5 transition text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-brown focus-visible:ring-offset-2"
           >
             Visit FAQ
           </a>
@@ -105,7 +131,7 @@ export default class ErrorBoundary extends Component<Props, State> {
             href="https://github.com/teslims2/StellarKraal-/issues/new"
             target="_blank"
             rel="noopener noreferrer"
-            className="border border-brown/30 text-brown px-4 py-2 rounded-lg hover:bg-brown/5 transition text-sm"
+            className="border border-brown/30 text-brown px-4 py-2 rounded-lg hover:bg-brown/5 transition text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-brown focus-visible:ring-offset-2"
           >
             Report issue
           </a>
