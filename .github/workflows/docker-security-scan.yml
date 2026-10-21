@@ -83,7 +83,7 @@ jobs:
           image-ref: stellarkraal-backend:${{ github.sha }}
           format: sarif
           output: trivy-backend-results.sarif
-          severity: CRITICAL,HIGH
+          severity: HIGH,CRITICAL
           exit-code: 0
           ignore-unfixed: true
           trivyignores: trivy-ignore.yaml
@@ -164,7 +164,7 @@ jobs:
           image-ref: stellarkraal-frontend:${{ github.sha }}
           format: sarif
           output: trivy-frontend-results.sarif
-          severity: CRITICAL,HIGH
+          severity: HIGH,CRITICAL
           exit-code: 0
           ignore-unfixed: true
           trivyignores: trivy-ignore.yaml
