@@ -1,93 +1,53 @@
-# StellarKraal
+# Handsoff
 
-[![CI](https://img.shields.io/github/actions/workflow/status/teslims2/StellarKraal-/backend-ci.yml?branch=main&label=backend%20CI)](https://github.com/teslims2/StellarKraal-/actions/workflows/backend-ci.yml)
-[![CI](https://img.shields.io/github/actions/workflow/status/teslims2/StellarKraal-/frontend-ci.yml?branch=main&label=frontend%20CI)](https://github.com/teslims2/StellarKraal-/actions/workflows/frontend-ci.yml)
-[![Coverage](https://img.shields.io/badge/coverage-70%25%20min-brightgreen)](https://github.com/teslims2/StellarKraal-/actions)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+Handsoff is a Soroban-based lending protocol with a React frontend for signing and submitting transactions.
 
+## Loan State Machine
 
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/23b2988b-5df8-4ca8-8350-cb556a98002a" />
+The loan lifecycle is modeled as a state machine. Each transition is emitted as a Soroban contract event so that off-chain listeners can reconstruct loan state deterministically.
 
+### States
 
-<img width="1920" height="1080" alt="Screenshot from 2026-06-08 19-30-32" src="https://github.com/user-attachments/assets/88b1d3f6-ba00-483c-81c7-d38f633e82bb" />
+| State | Description | Entry conditions | Exit conditions |
+| --- | --- | --- | --- |
+| `Requested` | Borrower has created a loan request | `request_loan` succeeds | `approve_loan` (→ `Approved`), `cancel_loan` (→ `Cancelled`), `expire_loan` after deadline (→ `Expired`) |
+| `Approved` | Lender has approved the request | `approve_loan` succeeds on a `Requested` loan | `fund_loan` (→ `Funded`), `cancel_loan` (→ `Cancelled`), `expire_loan` after deadline (→ `Expired`) |
+| `Funded` | Principal has been disbursed to the borrower | `fund_loan` succeeds on an `Approved` loan | `repay_loan` (→ `Repaid`), `mark_default` after due date (→ `Defaulted`) |
+| `Repaid` | Borrower has repaid principal plus interest | `repay_loan` succeeds on a `Funded` loan | Terminal |
+| `Defaulted` | Loan passed its due date without repayment | `mark_default` succeeds on a `Funded` loan | Terminal |
+| `Cancelled` | Loan was cancelled before funding | `cancel_loan` succeeds on a `Requested` or `Approved` loan | Terminal |
+| `Expired` | Loan request expired before approval/funding | `expire_loan` succeeds after the deadline | Terminal |
 
-<img width="1920" height="1080" alt="Screenshot from 2026-06-08 19-30-16" src="https://github.com/user-attachments/assets/7298b819-0ad8-4ce4-ad77-868393feb72f" />
+### Transition → Event Mapping
 
-<img width="1920" height="1080" alt="Screenshot from 2026-06-08 19-30-10" src="https://github.com/user-attachments/assets/c7d2183f-9971-47f0-8391-d14488a69ff0" />
+Every successful transition emits exactly one Soroban contract event. The event topic is `("loan", <event_name>)` and the payload is the loan record plus transition-specific fields.
 
-link to website https://kraal-bloom-connect.lovable.app/
+| Transition | Contract event | Payload |
+| --- | --- | --- |
+| `Requested` (create) | `loan_requested` | `{ loan_id, borrower, principal, interest_rate, deadline }` |
+| `Requested` → `Approved` | `loan_approved` | `{ loan_id, lender, approved_at }` |
+| `Approved` → `Funded` | `loan_funded` | `{ loan_id, lender, funded_at, amount }` |
+| `Funded` → `Repaid` | `loan_repaid` | `{ loan_id, borrower, repaid_at, amount }` |
+| `Funded` → `Defaulted` | `loan_defaulted` | `{ loan_id, defaulted_at }` |
+| `Requested`/`Approved` → `Cancelled` | `loan_cancelled` | `{ loan_id, cancelled_by, cancelled_at }` |
+| `Requested`/`Approved` → `Expired` | `loan_expired` | `{ loan_id, expired_at }` |
 
-## Project Overview
+### Invalid Transitions
 
-StellarKraal enables livestock-backed loans on the Stellar network. Animals are registered as collateral and borrowers can request loans against their appraised value, with on-chain loan lifecycle management and liquidation protection.
+Attempting a transition that is not allowed from the current state fails with a typed contract error and emits no event.
 
-See the [CHANGELOG](CHANGELOG.md) for release notes and upcoming changes.
+| Attempted transition | Error |
+| --- | --- |
+| `approve_loan` on non-`Requested` loan | `LoanError::InvalidState` |
+| `fund_loan` on non-`Approved` loan | `LoanError::InvalidState` |
+| `repay_loan` on non-`Funded` loan | `LoanError::InvalidState` |
+| `mark_default` before due date or on non-`Funded` loan | `LoanError::InvalidState` / `LoanError::NotYetDue` |
+| `cancel_loan` on `Funded`/terminal loan | `LoanError::InvalidState` |
+| `expire_loan` before deadline | `LoanError::NotYetExpired` |
+| Any transition on a terminal loan | `LoanError::InvalidState` |
 
-## Architecture
+### Lifecycle Timing Diagram
 
-```mermaid
-flowchart LR
-  subgraph Frontend
-    F[Next.js frontend] -->|HTTP| B[Backend API]
-  end
-
-  subgraph Backend
-    B -->|SQL| DB[(SQLite / PostgreSQL)]
-    B -->|RPC| S[Soroban smart contract]
-    B -->|logs, json-file driver| PT[Promtail]
-    B -->|/metrics| PR[Prometheus]
-  end
-
-  subgraph Contracts
-    S -->|WASM| W[(Stellar contract)]
-  end
-
-  subgraph Observability
-    PT -->|push| LK[(Loki)]
-    PR -->|scrape / alert rules| GF[Grafana]
-    LK -->|query| GF[Grafana]
-  end
-
-  subgraph Infrastructure["Infrastructure (Terraform, AWS)"]
-    ECS[ECS Fargate: backend/frontend] --> RDS[(RDS PostgreSQL)]
-    ECS --> S3[(S3 backups)]
-    SNS[SNS + CloudWatch alerts] -.-> B
-  end
-
-  B -.deployed on.-> ECS
-```
-
-### Architecture Summary
-
-- Frontend: React + Next.js 14 with Tailwind CSS.
-- Observability: backend metrics are scraped by Prometheus (alert rules in [`observability/prometheus-rules.yml`](observability/prometheus-rules.yml)); container logs are shipped by Promtail to Loki; Grafana visualizes both. See [docs/observability.md](docs/observability.md).
-- Infrastructure: Terraform ([`terraform/`](terraform/) and [`infrastructure/`](infrastructure/)) provisions AWS resources (ECS Fargate, RDS, S3, VPC, backups, SNS/CloudWatch alerting) for staging/production.
-- Backend: Node.js + TypeScript + Express.
-- Smart contract: Rust using the Soroban SDK.
-- Infrastructure: Docker, Docker Compose, local SQLite database.
-
-### Loan State Machine
-
-```mermaid
-stateDiagram-v2
-    [*] --> Pending : submit loan
-
-    Pending --> Active : request_loan()
-
-    Active --> at_risk : HF drops
-
-    at_risk --> Active : HF recovers
-
-    Active --> Repaid : repay_loan()
-
-    Active --> Liquidated : liquidate()
-
-    at_risk --> Repaid : repay_loan()
-
-    at_risk --> Liquidated : liquidate()
-
-    Repaid --> [*]
-    Liquidated --> [*]
 ```
 
 Full documentation: [Loan State Machine](docs/protocol/loan-state-machine.md)
@@ -439,7 +399,7 @@ To add a new ADR, copy [`docs/adr/template.md`](docs/adr/template.md), increment
 ---
 website https://kraal-bloom-connect.lovable.app/
 
-## License
+## Handsoff notes
 
 MIT © StellarKraal
 .
